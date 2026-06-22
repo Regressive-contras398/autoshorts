@@ -19,6 +19,72 @@ struct AnthropicContent {
     text: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct DeepseekMessage {
+    role: String,
+    content: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeepseekChoice {
+    message: DeepseekMessage,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeepseekResponse {
+    choices: Vec<DeepseekChoice>,
+}
+
+pub async fn detect_candidates_with_deepseek(
+    transcript: &NormalizedTranscript,
+    api_key: &str,
+) -> Result<Vec<CandidateDraft>> {
+    let segments = compact_segments(&transcript.segments);
+    let prompt = format!(
+        "You are identifying the most viral moments and strongest short-form clip candidates from a long-form transcript. \
+For each candidate, the clip must be self-contained, starting with an extremely engaging hook within the first 3 seconds (to capture immediate attention on social feeds), \
+30-90 seconds long, and cut at clean sentence/thought boundaries. Favor highly shareable content: concrete stories, \
+strong opinions, emotional turns, surprising or counter-intuitive claims, clear payoffs, and high-energy/dramatic peaks. \
+Avoid rambling setup, context-dependent references, and pure filler. Return up to 10 candidates as JSON matching this schema: \
+{{\"candidates\":[{{\"start\":0.0,\"end\":0.0,\"score\":0.0,\"hook\":\"...\",\"rationale\":\"...\"}}]}}\n\nTranscript:\n{segments}"
+    );
+
+    let response = reqwest::Client::new()
+        .post("https://api.deepseek.com/chat/completions")
+        .header("Authorization", format!("Bearer {api_key}"))
+        .json(&json!({
+            "model": "deepseek-chat",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            "temperature": 0.2,
+            "response_format": {
+                "type": "json_object"
+            }
+        }))
+        .send()
+        .await
+        .context("calling DeepSeek")?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(anyhow!("DeepSeek request failed ({status}): {body}"));
+    }
+
+    let res_body: DeepseekResponse = response.json().await.context("parsing DeepSeek response")?;
+    let text = res_body
+        .choices
+        .first()
+        .map(|c| c.message.content.clone())
+        .ok_or_else(|| anyhow!("DeepSeek response did not include choices content"))?;
+
+    parse_candidate_json(&text)
+}
+
 #[derive(Debug, Serialize)]
 struct ClaudeMessage<'a> {
     role: &'a str,

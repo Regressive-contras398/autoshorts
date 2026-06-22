@@ -23,12 +23,17 @@ struct AppState {
 
 #[tauri::command]
 fn environment_status(state: tauri::State<'_, AppState>) -> EnvironmentStatus {
+    let llm_provider = std::env::var("LLM_PROVIDER")
+        .unwrap_or_else(|_| "deepseek".to_string())
+        .to_lowercase();
     EnvironmentStatus {
         data_dir: state.data_dir.to_string_lossy().to_string(),
         has_ffmpeg: media::command_exists("ffmpeg"),
         has_ffprobe: media::command_exists("ffprobe"),
         has_deepgram_key: std::env::var("DEEPGRAM_API_KEY").is_ok(),
         has_anthropic_key: std::env::var("ANTHROPIC_API_KEY").is_ok(),
+        has_deepseek_key: std::env::var("DEEPSEEK_API_KEY").is_ok(),
+        llm_provider,
     }
 }
 
@@ -171,7 +176,7 @@ async fn generate_candidates(
     state: tauri::State<'_, AppState>,
     project_id: String,
     api_key: Option<String>,
-    allow_demo: bool,
+    _allow_demo: bool,
 ) -> Result<Vec<Candidate>, String> {
     let db = state.db.clone();
     let transcript = db
@@ -181,15 +186,26 @@ async fn generate_candidates(
     let normalized: NormalizedTranscript =
         serde_json::from_str(&transcript.raw_json).map_err(to_command_error)?;
 
-    let drafts = match api_key.or_else(|| std::env::var("ANTHROPIC_API_KEY").ok()) {
-        Some(key) => llm::detect_candidates_with_claude(&normalized, &key)
-            .await
-            .map_err(to_command_error)?,
-        None if allow_demo => llm::demo_candidates(&normalized),
-        None => {
-            return Err(
-                "Set ANTHROPIC_API_KEY or enable demo ranking to generate candidates.".to_string(),
-            )
+    let provider = std::env::var("LLM_PROVIDER")
+        .unwrap_or_else(|_| "deepseek".to_string())
+        .to_lowercase();
+
+    let drafts = match provider.as_str() {
+        "claude" => {
+            let key = api_key
+                .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
+                .ok_or_else(|| "Set ANTHROPIC_API_KEY or supply Claude API Key to generate candidates.".to_string())?;
+            llm::detect_candidates_with_claude(&normalized, &key)
+                .await
+                .map_err(to_command_error)?
+        }
+        _ => {
+            let key = api_key
+                .or_else(|| std::env::var("DEEPSEEK_API_KEY").ok())
+                .ok_or_else(|| "Set DEEPSEEK_API_KEY or supply DeepSeek API Key to generate candidates.".to_string())?;
+            llm::detect_candidates_with_deepseek(&normalized, &key)
+                .await
+                .map_err(to_command_error)?
         }
     };
 
@@ -260,6 +276,20 @@ fn render_flat_clip_for_candidate(
     }
 }
 
+#[tauri::command]
+fn delete_project(state: tauri::State<'_, AppState>, project_id: String) -> Result<(), String> {
+    state.db.delete_project(&project_id).map_err(to_command_error)
+}
+
+#[tauri::command]
+fn rename_project(
+    state: tauri::State<'_, AppState>,
+    project_id: String,
+    name: String,
+) -> Result<(), String> {
+    state.db.rename_project(&project_id, &name).map_err(to_command_error)
+}
+
 pub fn run() {
     let _ = dotenvy::dotenv();
 
@@ -286,7 +316,9 @@ pub fn run() {
             save_demo_transcript,
             generate_candidates,
             set_selected_clip_count,
-            render_flat_clip_for_candidate
+            render_flat_clip_for_candidate,
+            delete_project,
+            rename_project
         ])
         .run(tauri::generate_context!())
         .expect("error while running AutoShorts");

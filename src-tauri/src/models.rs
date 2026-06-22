@@ -8,6 +8,8 @@ pub struct EnvironmentStatus {
     pub has_ffprobe: bool,
     pub has_deepgram_key: bool,
     pub has_anthropic_key: bool,
+    pub has_deepseek_key: bool,
+    pub llm_provider: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,6 +27,7 @@ pub struct MediaProbe {
 #[serde(rename_all = "camelCase")]
 pub struct Project {
     pub id: String,
+    pub name: Option<String>,
     pub source_path: String,
     pub source_duration: Option<f64>,
     pub status: String,

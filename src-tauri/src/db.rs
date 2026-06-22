@@ -39,6 +39,7 @@ impl Database {
 
             CREATE TABLE IF NOT EXISTS projects (
                 id TEXT PRIMARY KEY,
+                name TEXT,
                 source_path TEXT NOT NULL,
                 source_duration REAL,
                 status TEXT NOT NULL,
@@ -96,6 +97,7 @@ impl Database {
             );
             ",
         )?;
+        let _ = conn.execute("ALTER TABLE projects ADD COLUMN name TEXT", []);
         Ok(())
     }
 
@@ -108,6 +110,7 @@ impl Database {
         let now = Utc::now().to_rfc3339();
         let project = Project {
             id: Uuid::new_v4().to_string(),
+            name: None,
             source_path: source_path.to_string(),
             source_duration,
             status: "ingest".to_string(),
@@ -118,10 +121,11 @@ impl Database {
 
         let conn = self.conn.lock().expect("database mutex poisoned");
         conn.execute(
-            "INSERT INTO projects (id, source_path, source_duration, status, transcription_mode, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO projects (id, name, source_path, source_duration, status, transcription_mode, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 project.id,
+                project.name,
                 project.source_path,
                 project.source_duration,
                 project.status,
@@ -137,7 +141,7 @@ impl Database {
     pub fn list_projects(&self) -> Result<Vec<Project>> {
         let conn = self.conn.lock().expect("database mutex poisoned");
         let mut stmt = conn.prepare(
-            "SELECT id, source_path, source_duration, status, transcription_mode, created_at, updated_at
+            "SELECT id, name, source_path, source_duration, status, transcription_mode, created_at, updated_at
              FROM projects ORDER BY updated_at DESC",
         )?;
 
@@ -149,7 +153,7 @@ impl Database {
     pub fn get_project(&self, project_id: &str) -> Result<Project> {
         let conn = self.conn.lock().expect("database mutex poisoned");
         conn.query_row(
-            "SELECT id, source_path, source_duration, status, transcription_mode, created_at, updated_at
+            "SELECT id, name, source_path, source_duration, status, transcription_mode, created_at, updated_at
              FROM projects WHERE id = ?1",
             params![project_id],
             project_from_row,
@@ -316,7 +320,7 @@ impl Database {
             "SELECT
                 candidates.id, candidates.project_id, candidates.start_sec, candidates.end_sec,
                 candidates.score, candidates.hook, candidates.rationale, candidates.rank, candidates.selected,
-                projects.id, projects.source_path, projects.source_duration, projects.status,
+                projects.id, projects.name, projects.source_path, projects.source_duration, projects.status,
                 projects.transcription_mode, projects.created_at, projects.updated_at
              FROM candidates
              INNER JOIN projects ON projects.id = candidates.project_id
@@ -337,12 +341,13 @@ impl Database {
                 };
                 let project = Project {
                     id: row.get(9)?,
-                    source_path: row.get(10)?,
-                    source_duration: row.get(11)?,
-                    status: row.get(12)?,
-                    transcription_mode: row.get(13)?,
-                    created_at: row.get(14)?,
-                    updated_at: row.get(15)?,
+                    name: row.get(10)?,
+                    source_path: row.get(11)?,
+                    source_duration: row.get(12)?,
+                    status: row.get(13)?,
+                    transcription_mode: row.get(14)?,
+                    created_at: row.get(15)?,
+                    updated_at: row.get(16)?,
                 };
                 Ok((candidate, project))
             },
@@ -427,17 +432,34 @@ impl Database {
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
     }
+
+    pub fn delete_project(&self, project_id: &str) -> Result<()> {
+        let conn = self.conn.lock().expect("database mutex poisoned");
+        conn.execute("DELETE FROM projects WHERE id = ?1", params![project_id])?;
+        Ok(())
+    }
+
+    pub fn rename_project(&self, project_id: &str, name: &str) -> Result<()> {
+        let conn = self.conn.lock().expect("database mutex poisoned");
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE projects SET name = ?1, updated_at = ?2 WHERE id = ?3",
+            params![name, now, project_id],
+        )?;
+        Ok(())
+    }
 }
 
 fn project_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Project> {
     Ok(Project {
         id: row.get(0)?,
-        source_path: row.get(1)?,
-        source_duration: row.get(2)?,
-        status: row.get(3)?,
-        transcription_mode: row.get(4)?,
-        created_at: row.get(5)?,
-        updated_at: row.get(6)?,
+        name: row.get(1)?,
+        source_path: row.get(2)?,
+        source_duration: row.get(3)?,
+        status: row.get(4)?,
+        transcription_mode: row.get(5)?,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
     })
 }
 

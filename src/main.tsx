@@ -27,10 +27,13 @@ type EnvironmentStatus = {
   hasFfprobe: boolean;
   hasDeepgramKey: boolean;
   hasAnthropicKey: boolean;
+  hasDeepseekKey: boolean;
+  llmProvider: string;
 };
 
 type Project = {
   id: string;
+  name: string | null;
   sourcePath: string;
   sourceDuration: number | null;
   status: string;
@@ -106,6 +109,7 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [deepgramKey, setDeepgramKey] = useState("");
   const [anthropicKey, setAnthropicKey] = useState("");
+  const [deepseekKey, setDeepseekKey] = useState("");
   const [showSettings, setShowSettings] = useState(false);
 
   const transcript = useMemo(() => {
@@ -128,6 +132,10 @@ function App() {
   }).length;
   const canUseCloudKey = environment?.hasDeepgramKey || deepgramKey.trim().length > 0;
   const canUseClaude = environment?.hasAnthropicKey || anthropicKey.trim().length > 0;
+  const canUseDeepseek = environment?.hasDeepseekKey || deepseekKey.trim().length > 0;
+
+  const activeLlmProvider = environment?.llmProvider || "deepseek";
+  const canUseActiveLlm = activeLlmProvider === "claude" ? canUseClaude : canUseDeepseek;
 
   useEffect(() => {
     void refresh();
@@ -164,6 +172,7 @@ function App() {
   }
 
   async function importMedia() {
+    let newProjectId: string | null = null;
     await run("import", async () => {
       const selected = await open({
         multiple: false,
@@ -179,8 +188,97 @@ function App() {
         path: selected,
         transcriptionMode: "cloud",
       });
+      newProjectId = project.id;
       await refresh(project.id);
     });
+
+    if (newProjectId) {
+      await runAutoPipeline(newProjectId);
+    }
+  }
+
+  async function runAutoPipeline(projectId: string) {
+    setError(null);
+    const env = await invoke<EnvironmentStatus>("environment_status");
+    const hasDG = env.hasDeepgramKey || deepgramKey.trim().length > 0;
+    const activeLlm = env.llmProvider || "deepseek";
+    const hasActiveLlm = activeLlm === "claude"
+      ? (env.hasAnthropicKey || anthropicKey.trim().length > 0)
+      : (env.hasDeepseekKey || deepseekKey.trim().length > 0);
+
+    if (!hasDG) {
+      setError("Import successful. Deepgram key is missing. Please add it to start transcription.");
+      return;
+    }
+
+    // 1. Transcription
+    try {
+      setBusy("transcribe");
+      await invoke<Transcript>("transcribe_project", {
+        projectId,
+        provider: "deepgram",
+        apiKey: deepgramKey.trim() || null,
+      });
+      await refresh(projectId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setBusy("idle");
+      return;
+    }
+
+    if (!hasActiveLlm) {
+      setError(`Transcription complete. ${activeLlm === "claude" ? "Claude" : "DeepSeek"} API Key is missing. Please add it in settings to analyze viral moments.`);
+      setBusy("idle");
+      return;
+    }
+
+    // 2. LLM Moments
+    try {
+      setBusy("moments");
+      const activeKey = activeLlm === "claude" ? anthropicKey.trim() : deepseekKey.trim();
+      await invoke<Candidate[]>("generate_candidates", {
+        projectId,
+        apiKey: activeKey || null,
+        allowDemo: false,
+      });
+      await refresh(projectId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy("idle");
+    }
+  }
+
+  async function renameProject(projectId: string) {
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) return;
+    const currentName = project.name || fileName(project.sourcePath);
+    const newName = window.prompt("Rename Project:", currentName);
+    if (newName === null) return;
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+
+    try {
+      await invoke("rename_project", { projectId, name: trimmed });
+      await refresh(detail?.project.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function deleteProject(projectId: string) {
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) return;
+    const name = project.name || fileName(project.sourcePath);
+    if (!window.confirm(`Are you sure you want to delete the project "${name}"?`)) return;
+
+    try {
+      await invoke("delete_project", { projectId });
+      const nextActiveId = detail?.project.id === projectId ? null : detail?.project.id;
+      await refresh(nextActiveId ?? undefined);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   }
 
   async function selectProject(projectId: string) {
@@ -202,20 +300,13 @@ function App() {
     });
   }
 
-  async function demoTranscript() {
-    if (!detail) return;
-    await run("demoTranscript", async () => {
-      await invoke<Transcript>("save_demo_transcript", { projectId: detail.project.id });
-      await refresh(detail.project.id);
-    });
-  }
-
   async function moments(allowDemo: boolean) {
     if (!detail) return;
     await run("moments", async () => {
+      const activeKey = activeLlmProvider === "claude" ? anthropicKey.trim() : deepseekKey.trim();
       await invoke<Candidate[]>("generate_candidates", {
         projectId: detail.project.id,
-        apiKey: anthropicKey.trim() || null,
+        apiKey: activeKey || null,
         allowDemo,
       });
       await refresh(detail.project.id);
@@ -278,7 +369,7 @@ function App() {
                 onClick={() => void selectProject(project.id)}
               >
                 <FileVideo size={15} />
-                <span>{fileName(project.sourcePath)}</span>
+                <span>{project.name || fileName(project.sourcePath)}</span>
                 <ChevronRight size={14} />
               </button>
             ))}
@@ -291,7 +382,7 @@ function App() {
               <header className="topbar">
                 <div className="project-info">
                   <div className="eyebrow">{detail.project.status}</div>
-                  <h2>{fileName(detail.project.sourcePath)}</h2>
+                  <h2>{detail.project.name || fileName(detail.project.sourcePath)}</h2>
                 </div>
                 <div className="topbar-actions">
                   <button 
@@ -321,11 +412,24 @@ function App() {
                       />
                     </label>
                     <label>
-                      <span>Claude API Key</span>
+                      <span>
+                        Claude API Key {activeLlmProvider === "claude" && <strong style={{ color: "var(--accent-primary)" }}>(Active)</strong>}
+                      </span>
                       <input
                         value={anthropicKey}
                         onChange={(event) => setAnthropicKey(event.target.value)}
                         placeholder={environment?.hasAnthropicKey ? "Loaded from env" : "Optional (Claude API Key)"}
+                        type="password"
+                      />
+                    </label>
+                    <label>
+                      <span>
+                        DeepSeek API Key {activeLlmProvider === "deepseek" && <strong style={{ color: "var(--accent-primary)" }}>(Active)</strong>}
+                      </span>
+                      <input
+                        value={deepseekKey}
+                        onChange={(event) => setDeepseekKey(event.target.value)}
+                        placeholder={environment?.hasDeepseekKey ? "Loaded from env" : "Optional (DeepSeek API Key)"}
                         type="password"
                       />
                     </label>
@@ -353,14 +457,16 @@ function App() {
                     <div className="button-pair">
                       <button onClick={transcribe} disabled={busy !== "idle" || !canUseCloudKey}>
                         {busy === "transcribe" ? <Loader2 className="spin" size={16} /> : <AudioLines size={16} />}
-                        Cloud
-                      </button>
-                      <button onClick={demoTranscript} disabled={busy !== "idle"}>
-                        {busy === "demoTranscript" ? <Loader2 className="spin" size={16} /> : <Wand2 size={16} />}
-                        Demo
+                        Transcribe
                       </button>
                     </div>
                   </div>
+
+                  {!canUseCloudKey && (
+                    <div className="api-warning">
+                      ⚠️ Deepgram API Key is missing. Transcribing will not work. Please add your key in <strong>API Settings</strong>.
+                    </div>
+                  )}
 
                   <div className="transcript-list">
                     {transcript?.segments.map((segment, index) => (
@@ -383,16 +489,18 @@ function App() {
                         {busy === "cut" ? <Loader2 className="spin" size={16} /> : <Scissors size={16} />}
                         Cut
                       </button>
-                      <button onClick={() => void moments(false)} disabled={busy !== "idle" || !detail.transcript || !canUseClaude}>
+                      <button onClick={() => void moments(false)} disabled={busy !== "idle" || !detail.transcript || !canUseActiveLlm}>
                         {busy === "moments" ? <Loader2 className="spin" size={16} /> : <Sparkles size={16} />}
-                        Claude
-                      </button>
-                      <button onClick={() => void moments(true)} disabled={busy !== "idle" || !detail.transcript}>
-                        {busy === "moments" ? <Loader2 className="spin" size={16} /> : <Wand2 size={16} />}
-                        Demo
+                        Find Viral Moments
                       </button>
                     </div>
                   </div>
+
+                  {!canUseActiveLlm && (
+                    <div className="api-warning">
+                      ⚠️ {activeLlmProvider === "claude" ? "Claude" : "DeepSeek"} API Key is missing. Viral moment identification will not work. Please add your key in <strong>API Settings</strong>.
+                    </div>
+                  )}
 
                   {detail.candidates.length > 0 && (
                     <div className="clip-control">
@@ -466,13 +574,55 @@ function App() {
               </div>
             </>
           ) : (
-            <div className="empty-workspace">
-              <Clapperboard size={46} />
-              <h2>AutoShorts</h2>
-              <button className="primary-action compact" onClick={importMedia}>
-                <FileVideo size={18} />
-                Import recording
-              </button>
+            <div className="home-dashboard">
+              <header className="home-header">
+                <div>
+                  <h2>All Projects</h2>
+                  <p>Select a project below or import a new media file to get started.</p>
+                </div>
+                <button className="primary-action compact" onClick={importMedia} disabled={busy !== "idle"}>
+                  {busy === "import" ? <Loader2 className="spin" size={18} /> : <FileVideo size={18} />}
+                  Import recording
+                </button>
+              </header>
+
+              {projects.length > 0 ? (
+                <div className="projects-grid">
+                  {projects.map((project) => {
+                    const name = project.name || fileName(project.sourcePath);
+                    return (
+                      <article key={project.id} className="project-card">
+                        <div className="project-card-header">
+                          <FileVideo size={24} className="project-card-icon" />
+                          <span className="project-card-status">{project.status}</span>
+                        </div>
+                        <h3 className="project-card-title">{name}</h3>
+                        <div className="project-card-meta">
+                          <span>Duration: {project.sourceDuration ? formatTime(project.sourceDuration) : "Probing..."}</span>
+                          <span>Created: {new Date(project.createdAt).toLocaleDateString()}</span>
+                        </div>
+                        <div className="project-card-actions">
+                          <button className="action-btn open-btn" onClick={() => void selectProject(project.id)}>
+                            Open
+                          </button>
+                          <button className="action-btn rename-btn" onClick={() => void renameProject(project.id)}>
+                            Rename
+                          </button>
+                          <button className="action-btn delete-btn" onClick={() => void deleteProject(project.id)}>
+                            Delete
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="empty-dashboard-state">
+                  <Clapperboard size={48} className="empty-state-icon" />
+                  <h3>No projects found</h3>
+                  <p>Import your first recording to begin creating shorts.</p>
+                </div>
+              )}
             </div>
           )}
         </section>
@@ -488,6 +638,7 @@ function App() {
             <span className={`indicator ${environment?.hasFfprobe ? "active" : ""}`} title="FFprobe status">ffprobe</span>
             <span className={`indicator ${canUseCloudKey ? "active" : ""}`} title="Deepgram Key status">Deepgram</span>
             <span className={`indicator ${canUseClaude ? "active" : ""}`} title="Claude Key status">Claude</span>
+            <span className={`indicator ${canUseDeepseek ? "active" : ""}`} title="DeepSeek Key status">DeepSeek</span>
           </div>
         </div>
       </footer>
