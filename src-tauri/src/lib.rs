@@ -874,7 +874,7 @@ fn build_drawtext_filters(
         let mut font_option = String::new();
         for path in &font_paths {
             if std::path::Path::new(path).exists() {
-                font_option = format!("fontfile='{}':", path);
+                font_option = format!("fontfile='{}':", path.replace(':', "\:"));
                 break;
             }
         }
