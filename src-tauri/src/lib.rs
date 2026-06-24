@@ -7,13 +7,21 @@ mod transcription;
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Context, Result};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use db::Database;
 use models::{
     Candidate, EnvironmentStatus, MediaProbe, NormalizedTranscript, Project, ProjectDetail,
     Transcript, TranscriptWord,
 };
+
+#[derive(Clone, serde::Serialize)]
+struct PullProgressPayload {
+    status: String,
+    completed: Option<u64>,
+    total: Option<u64>,
+    percentage: Option<f64>,
+}
 
 #[derive(Clone)]
 struct AppState {
@@ -22,11 +30,25 @@ struct AppState {
 }
 
 #[tauri::command]
-fn environment_status(state: tauri::State<'_, AppState>) -> EnvironmentStatus {
+async fn environment_status(state: tauri::State<'_, AppState>) -> Result<EnvironmentStatus, String> {
     let llm_provider = std::env::var("LLM_PROVIDER")
         .unwrap_or_else(|_| "deepseek".to_string())
         .to_lowercase();
-    EnvironmentStatus {
+
+    let has_local_whisper_model = std::process::Command::new("python3")
+        .args(["-c", "import whisper"])
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false);
+
+    let has_ollama = reqwest::Client::new()
+        .get("http://localhost:11434")
+        .timeout(std::time::Duration::from_millis(1000))
+        .send()
+        .await
+        .is_ok();
+
+    Ok(EnvironmentStatus {
         data_dir: state.data_dir.to_string_lossy().to_string(),
         has_ffmpeg: media::command_exists("ffmpeg"),
         has_ffprobe: media::command_exists("ffprobe"),
@@ -34,7 +56,222 @@ fn environment_status(state: tauri::State<'_, AppState>) -> EnvironmentStatus {
         has_anthropic_key: std::env::var("ANTHROPIC_API_KEY").is_ok(),
         has_deepseek_key: std::env::var("DEEPSEEK_API_KEY").is_ok(),
         llm_provider,
+        has_local_whisper_model,
+        has_ollama,
+    })
+}
+
+#[tauri::command]
+async fn pull_ollama_model(
+    app: tauri::AppHandle,
+    model_name: String,
+) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    
+    let mut response = client
+        .post("http://localhost:11434/api/pull")
+        .json(&serde_json::json!({
+            "name": model_name,
+            "stream": true,
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to connect to Ollama: {e}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        return Err(format!("Ollama pull returned status {status}: {text}"));
     }
+
+    let mut buffer = String::new();
+    while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+        let chunk_str = String::from_utf8_lossy(&chunk);
+        buffer.push_str(&chunk_str);
+
+        // Process lines in buffer
+        while let Some(pos) = buffer.find('\n') {
+            let line = buffer[..pos].trim().to_string();
+            buffer = buffer[pos + 1..].to_string();
+
+            if line.is_empty() {
+                continue;
+            }
+
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
+                if let Some(err_msg) = val.get("error").and_then(|v| v.as_str()) {
+                    return Err(err_msg.to_string());
+                }
+
+                let completed = val.get("completed").and_then(|v| v.as_u64());
+                let total = val.get("total").and_then(|v| v.as_u64());
+
+                let mut status = val.get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Downloading...")
+                    .to_string();
+
+                if status.starts_with("downloading ") {
+                    if let (Some(c), Some(t)) = (completed, total) {
+                        let c_mb = c as f64 / 1024.0 / 1024.0;
+                        let t_mb = t as f64 / 1024.0 / 1024.0;
+                        if t_mb > 100.0 {
+                            status = format!("Downloading weights: {:.1} MB / {:.1} MB", c_mb, t_mb);
+                        } else {
+                            status = format!("Downloading model components: {:.1} MB / {:.1} MB", c_mb, t_mb);
+                        }
+                    } else {
+                        status = "Downloading model components...".to_string();
+                    }
+                }
+                
+                let percentage = if let (Some(c), Some(t)) = (completed, total) {
+                    if t > 0 {
+                        Some((c as f64 / t as f64) * 100.0)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                let payload = PullProgressPayload {
+                    status,
+                    completed,
+                    total,
+                    percentage,
+                };
+
+                let _ = app.emit("ollama-pull-progress", payload);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn install_ollama(app: tauri::AppHandle) -> Result<(), String> {
+    let _ = app.emit("ollama-install-status", "Checking if Ollama is already installed...");
+    let launch = std::process::Command::new("open")
+        .args(["-a", "Ollama"])
+        .output();
+    
+    if let Ok(out) = launch {
+        if out.status.success() {
+            let _ = app.emit("ollama-install-status", "Ollama is installed. Launching...");
+            for _ in 0..12 {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                if reqwest::Client::new().get("http://localhost:11434").send().await.is_ok() {
+                    let _ = app.emit("ollama-install-status", "Ollama started successfully!");
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    let brew_path = if std::path::Path::new("/opt/homebrew/bin/brew").exists() {
+        Some("/opt/homebrew/bin/brew")
+    } else if std::path::Path::new("/usr/local/bin/brew").exists() {
+        Some("/usr/local/bin/brew")
+    } else {
+        None
+    };
+
+    if let Some(path) = brew_path {
+        let _ = app.emit("ollama-install-status", "Installing Ollama via Homebrew Cask...");
+        
+        let output = std::process::Command::new(path)
+            .args(["install", "--cask", "ollama"])
+            .output()
+            .map_err(|e| format!("Failed to run brew command: {e}"))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            if !stderr.contains("already installed") {
+                return Err(format!("Brew install failed: {}", stderr));
+            }
+        }
+
+        let _ = app.emit("ollama-install-status", "Starting Ollama.app...");
+        let launch = std::process::Command::new("open")
+            .args(["-a", "Ollama"])
+            .output();
+        
+        if let Ok(out) = launch {
+            if out.status.success() {
+                for _ in 0..12 {
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    if reqwest::Client::new().get("http://localhost:11434").send().await.is_ok() {
+                        let _ = app.emit("ollama-install-status", "Ollama started successfully!");
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
+
+    let _ = app.emit("ollama-install-status", "Downloading Ollama zip from official source...");
+    let temp_dir = std::env::temp_dir();
+    let zip_path = temp_dir.join("Ollama-darwin.zip");
+    
+    let response = reqwest::get("https://ollama.com/download/Ollama-darwin.zip")
+        .await
+        .map_err(|e| format!("Failed to download Ollama: {e}"))?;
+
+    let bytes = response.bytes().await.map_err(|e| format!("Failed to read Ollama bytes: {e}"))?;
+    std::fs::write(&zip_path, bytes).map_err(|e| format!("Failed to save Ollama zip: {e}"))?;
+
+    let _ = app.emit("ollama-install-status", "Unzipping Ollama package...");
+    let unzip_output = std::process::Command::new("unzip")
+        .args(["-o", &zip_path.to_string_lossy().to_string(), "-d", &temp_dir.to_string_lossy().to_string()])
+        .output()
+        .map_err(|e| format!("Failed to unzip Ollama: {e}"))?;
+
+    if !unzip_output.status.success() {
+        return Err(format!("Failed to unzip: {}", String::from_utf8_lossy(&unzip_output.stderr)));
+    }
+
+    let _ = app.emit("ollama-install-status", "Installing to Applications folder...");
+    let app_src = temp_dir.join("Ollama.app");
+    
+    let mv_output = std::process::Command::new("mv")
+        .args([&app_src.to_string_lossy().to_string(), "/Applications/"])
+        .output()
+        .map_err(|e| format!("Failed to move Ollama to Applications: {e}"))?;
+
+    if !mv_output.status.success() {
+        let user_apps = dirs::home_dir()
+            .ok_or_else(|| "Could not find home directory".to_string())?
+            .join("Applications");
+        std::fs::create_dir_all(&user_apps).map_err(|e| format!("Failed to create ~/Applications: {e}"))?;
+        
+        let mv_user_output = std::process::Command::new("mv")
+            .args([&app_src.to_string_lossy().to_string(), &user_apps.to_string_lossy().to_string()])
+            .output()
+            .map_err(|e| format!("Failed to move Ollama to ~/Applications: {e}"))?;
+
+        if !mv_user_output.status.success() {
+            return Err(format!("Failed to install Ollama to Applications folder: {}", String::from_utf8_lossy(&mv_user_output.stderr)));
+        }
+    }
+
+    let _ = app.emit("ollama-install-status", "Starting Ollama...");
+    let launch = std::process::Command::new("open")
+        .args(["-a", "Ollama"])
+        .output();
+
+    if launch.is_ok() {
+        for _ in 0..12 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            if reqwest::Client::new().get("http://localhost:11434").send().await.is_ok() {
+                let _ = app.emit("ollama-install-status", "Ollama started successfully!");
+                return Ok(());
+            }
+        }
+    }
+
+    Err("Ollama installed but could not be automatically started. Please open Ollama from your Applications folder.".to_string())
 }
 
 #[tauri::command]
@@ -136,7 +373,22 @@ async fn transcribe_project(
                 .map_err(to_command_error)?
         }
         "local" => {
-            return Err("Local whisper-rs transcription is reserved for the native model integration pass. Use Deepgram for this MVP build.".to_string());
+            let has_python_whisper = std::process::Command::new("python3")
+                .args(["-c", "import whisper"])
+                .output()
+                .map(|out| out.status.success())
+                .unwrap_or(false);
+            if !has_python_whisper {
+                return Err("Python package 'openai-whisper' is not installed. Please run 'pip3 install openai-whisper' in your terminal.".to_string());
+            }
+            let audio_path = media::extract_audio(
+                &project.source_path,
+                &data_dir.join("projects").join(&project_id),
+            )
+            .map_err(to_command_error)?;
+            transcription::transcribe_local(&audio_path.to_string_lossy(), &data_dir.to_string_lossy())
+                .await
+                .map_err(to_command_error)?
         }
         other => return Err(format!("Unsupported transcription provider: {other}")),
     };
@@ -178,6 +430,8 @@ async fn generate_candidates(
     state: tauri::State<'_, AppState>,
     project_id: String,
     api_key: Option<String>,
+    provider: Option<String>,
+    model_name: Option<String>,
     _allow_demo: bool,
 ) -> Result<Vec<Candidate>, String> {
     let db = state.db.clone();
@@ -188,16 +442,25 @@ async fn generate_candidates(
     let normalized: NormalizedTranscript =
         serde_json::from_str(&transcript.raw_json).map_err(to_command_error)?;
 
-    let provider = std::env::var("LLM_PROVIDER")
-        .unwrap_or_else(|_| "deepseek".to_string())
+    let active_provider = provider
+        .or_else(|| std::env::var("LLM_PROVIDER").ok())
+        .unwrap_or_else(|| "deepseek".to_string())
         .to_lowercase();
 
-    let drafts = match provider.as_str() {
+    let drafts = match active_provider.as_str() {
         "claude" => {
             let key = api_key
                 .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
                 .ok_or_else(|| "Set ANTHROPIC_API_KEY or supply Claude API Key to generate candidates.".to_string())?;
             llm::detect_candidates_with_claude(&normalized, &key)
+                .await
+                .map_err(to_command_error)?
+        }
+        "local" | "ollama" => {
+            let model = model_name
+                .or_else(|| std::env::var("OLLAMA_MODEL").ok())
+                .unwrap_or_else(|| "llama3.2".to_string());
+            llm::detect_candidates_with_local_llm(&normalized, &model)
                 .await
                 .map_err(to_command_error)?
         }
@@ -376,12 +639,15 @@ pub fn run() {
                 .app_data_dir()
                 .context("resolving app data directory")?;
             std::fs::create_dir_all(&data_dir).context("creating app data directory")?;
+            std::fs::create_dir_all(data_dir.join("models")).context("creating models directory")?;
             let db = Database::open(&data_dir.join("autoshorts.sqlite"))?;
             app.manage(AppState { db, data_dir });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             environment_status,
+            pull_ollama_model,
+            install_ollama,
             create_project_from_path,
             list_projects,
             get_project_detail,

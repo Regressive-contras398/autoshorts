@@ -136,3 +136,98 @@ pub fn build_segments(words: &[TranscriptWord]) -> Vec<TranscriptSegment> {
 
     segments
 }
+
+pub async fn transcribe_local(audio_path: &str, model_path: &str) -> Result<NormalizedTranscript> {
+    let audio_path = audio_path.to_string();
+    let model_path = model_path.to_string();
+    
+    // Resolve the directory where the model lives. We'll put transcribe.py there.
+    let model_dir = std::path::Path::new(&model_path)
+        .parent()
+        .ok_or_else(|| anyhow!("Invalid model path"))?;
+    
+    let script_path = model_dir.join("transcribe.py");
+    if !script_path.exists() {
+        let script_content = r#"import sys
+import json
+import whisper
+
+def main():
+    if len(sys.argv) < 3:
+        print("Usage: transcribe.py <audio_path> <output_json_path> [model_name]")
+        sys.exit(1)
+        
+    audio_path = sys.argv[1]
+    output_json_path = sys.argv[2]
+    model_name = sys.argv[3] if len(sys.argv) > 3 else "base"
+    
+    # Load model. Automatically uses MPS on Apple Silicon if PyTorch supports it.
+    model = whisper.load_model(model_name)
+    
+    # Transcribe with word-level timestamps
+    result = model.transcribe(audio_path, word_timestamps=True)
+    
+    normalized = {
+        "language": result.get("language", "en"),
+        "duration": result.get("segments", [])[-1]["end"] if result.get("segments") else 0.0,
+        "speakers": ["S1"],
+        "words": [],
+        "segments": []
+    }
+    
+    for segment in result.get("segments", []):
+        normalized["segments"].append({
+            "start": segment["start"],
+            "end": segment["end"],
+            "speaker": "S1",
+            "text": segment["text"].strip()
+        })
+        
+        for word in segment.get("words", []):
+            cleaned_text = word["word"].strip()
+            normalized["words"].append({
+                "text": cleaned_text,
+                "start": word["start"],
+                "end": word["end"],
+                "speaker": "S1"
+            })
+            
+    with open(output_json_path, "w", encoding="utf-8") as f:
+        json.dump(normalized, f, indent=2, ensure_ascii=False)
+
+if __name__ == "__main__":
+    main()
+"#;
+        std::fs::write(&script_path, script_content).context("writing transcribe.py script")?;
+    }
+
+    let output_json_path = model_dir.join(format!("temp_transcript_{}.json", uuid::Uuid::new_v4()));
+    let script_path_str = script_path.to_string_lossy().to_string();
+    let output_json_path_str = output_json_path.to_string_lossy().to_string();
+
+    tokio::task::spawn_blocking(move || {
+        let output = std::process::Command::new("python3")
+            .arg(&script_path_str)
+            .arg(&audio_path)
+            .arg(&output_json_path_str)
+            .arg("base") // default model size
+            .output()
+            .context("executing python3 transcribe.py")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            return Err(anyhow!("Python transcription script failed:\nStderr: {}\nStdout: {}", stderr, stdout));
+        }
+
+        let json_bytes = std::fs::read(&output_json_path_str).context("reading output transcript JSON")?;
+        let transcript: NormalizedTranscript = serde_json::from_slice(&json_bytes).context("parsing output transcript JSON")?;
+        
+        // Cleanup temp file
+        let _ = std::fs::remove_file(&output_json_path_str);
+
+        Ok(transcript)
+    })
+    .await
+    .context("spawn_blocking failed")?
+}

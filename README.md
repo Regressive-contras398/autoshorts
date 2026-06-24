@@ -82,10 +82,33 @@ Download the correct package matching your system from the latest [GitHub Releas
    ./autoshorts_*.AppImage
    ```
 
-### 🔑 Configure API Credentials
-Once installed, open the application and click **API Settings** in the top bar:
-1. Paste your API keys for **Deepgram** (transcription) and **Claude** and/or **DeepSeek** (viral candidate moments).
-2. The UI will show a green `(Active)` badge next to your active LLM and notify you if credentials are missing.
+### 🚀 First-Launch Onboarding & AI Configuration
+
+When you first launch the application, you will be greeted by an **Onboarding Wizard** that lets you choose your preferred workflow:
+
+#### Option A: Fully Offline (Ollama + Whisper)
+1. **Ollama Setup**: Select a local model card (`llama3.2 3B`, `qwen2.5 3B`, or `qwen2.5 7B`). The application will check if Ollama is running and automatically pull the model weights, showing a downloader progress bar.
+2. **Local Whisper**: Follow the prompt instructions to verify Python is installed and run `pip3 install openai-whisper` to enable fully offline transcription.
+
+#### Option B: Cloud API Keys
+1. Enter your API credentials for:
+   * **Deepgram**: For fast, accurate cloud transcription.
+   * **DeepSeek**: (Highly Recommended) For cheap, high-quality cloud moment detection.
+   * **Claude**: For premium copywriting, hooks, and moment detection.
+2. Click **Save & Start** to immediately load the dashboard.
+
+---
+
+### ⚙️ Modifying Settings & Resetting Onboarding
+
+* **Update Credentials**: Click the **API Settings** gear icon in the top right of your app dashboard to switch engines, select different local models, or update API keys.
+* **Reset Onboarding**: If you want to switch from Cloud to Offline (or vice-versa) and start setup from scratch, click the **Reset App Configuration & Onboarding** button at the bottom of the API Settings panel.
+
+> [!TIP]
+> **LLM Provider Recommendation (Local vs. Cloud)**:
+> - **Local Models (Ollama)**: While AutoShorts supports fully offline moments analysis via local Ollama models (like LLaMA 3.2 3B or Qwen 2.5 3B/7B), **local models are generally not recommended for viral moment detection**. Smaller 3B/7B models lack the context reasoning and mathematical capabilities needed to evaluate long transcripts and calculate accurate segment timestamps (often outputting fragments that are too short).
+> - **DeepSeek (Highly Recommended)**: We strongly suggest using **DeepSeek** for moment detection. It offers top-tier reasoning capabilities (matching GPT-4/Claude 3.5 Sonnet) at a **fraction of a cent per run** (under $0.001 per transcript). You can get an API key instantly at [platform.deepseek.com](https://platform.deepseek.com).
+> - **Claude (Premium Option)**: Claude 3.5 Sonnet provides the absolute best hooks copywriting and emotional resonance, but is slightly more expensive than DeepSeek (typically $0.01 – $0.05 per run).
 
 ---
 
